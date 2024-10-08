@@ -56,8 +56,8 @@ class  Status {
   }
 
  private:
-  //state_[0..3] == length of message
-  //state_[4]    == code
+  //state_[0..3] == length of message (4 bytes)
+  //state_[4]    == code (1 byte)
   //state_[5..]  == message
   char* status_;
 };

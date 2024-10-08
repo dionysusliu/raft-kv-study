@@ -5,6 +5,8 @@
 namespace kv {
 static uint32_t MIN_BUFFERING = 4096;
 
+  // read-once/write-once dynamic buffer
+  // for data transmission buffer to Redis
 ByteBuffer::ByteBuffer()
     : reader_(0),
       writer_(0),
@@ -42,7 +44,7 @@ void ByteBuffer::may_shrink_to_fit() {
 void ByteBuffer::reset() {
   reader_ = writer_ = 0;
   buff_.resize(MIN_BUFFERING);
-  buff_.shrink_to_fit();
+  buff_.shrink_to_fit(); // reduce capacity to fit its size
 }
 
 }

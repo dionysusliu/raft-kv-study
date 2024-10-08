@@ -6,6 +6,8 @@
 #include <exception>
 #include <stdexcept>
 
+// global logging macros
+
 #ifdef DEBUG
 #define LOG_DEBUG(format, ...) { fprintf(stderr, "DEBUG [%s:%d] " format "\n", strrchr(__FILE__, '/') + 1, __LINE__, ##__VA_ARGS__); }
 #else
