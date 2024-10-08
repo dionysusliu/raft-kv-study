@@ -14,7 +14,7 @@ static const WAL_type wal_EntryType = 1;
 static const WAL_type wal_StateType = 2;
 static const WAL_type wal_CrcType = 3;
 static const WAL_type wal_snapshot_Type = 4;
-static const int SegmentSizeBytes = 64 * 1000 * 1000; // 64MB
+static const int SegmentSizeBytes = 64 * 1000 * 1000; // 64MB, threshold of un-synced logs where sync must take place
 
 static std::string wal_name(uint64_t seq, uint64_t index) {
   char buffer[64];
@@ -27,17 +27,17 @@ class WAL_File {
   WAL_File(const char* path, int64_t seq)
       : seq(seq),
         file_size(0) {
-    fp = fopen(path, "a+");
+    fp = fopen(path, "a+"); // try open the file
     if (!fp) {
       LOG_FATAL("fopen error %s", strerror(errno));
     }
 
-    file_size = ftell(fp);
+    file_size = ftell(fp); // retreive file size
     if (file_size == -1) {
       LOG_FATAL("ftell error %s", strerror(errno));
     }
 
-    if (fseek(fp, 0L, SEEK_SET) == -1) {
+    if (fseek(fp, 0L, SEEK_SET) == -1) { // set file pointer at beginning of file
       LOG_FATAL("fseek error %s", strerror(errno));
     }
   }
@@ -47,11 +47,11 @@ class WAL_File {
   }
 
   void truncate(size_t offset) {
-    if (ftruncate(fileno(fp), offset) != 0) {
+    if (ftruncate(fileno(fp), offset) != 0) { // truncate file to specific length
       LOG_FATAL("ftruncate error %s", strerror(errno));
     }
 
-    if (fseek(fp, offset, SEEK_SET) == -1) {
+    if (fseek(fp, offset, SEEK_SET) == -1) { // move file cursor to end of file (next to last char)
       LOG_FATAL("fseek error %s", strerror(errno));
     }
 
@@ -59,6 +59,8 @@ class WAL_File {
     data_buffer.clear();
   }
 
+  // append new record to data buffer
+  // batch writing, reduce frequency of file IO
   void append(WAL_type type, const uint8_t* data, size_t len) {
     WAL_Record record;
     record.type = type;
@@ -69,6 +71,7 @@ class WAL_File {
     data_buffer.insert(data_buffer.end(), data, data + len);
   }
 
+  // flush data_buffer to stable storage
   void sync() {
     if (data_buffer.empty()) {
       return;
@@ -83,6 +86,7 @@ class WAL_File {
     data_buffer.clear();
   }
 
+  // sequential read all contents, reduce frequency of file IO
   void read_all(std::vector<char>& out) {
     char buffer[1024];
     while (true) {
@@ -103,17 +107,20 @@ class WAL_File {
   FILE* fp;
 };
 
+  // Assign and init dir as the new WAL dir
+  // notice: dir must be a valid directory
+  // notice: Upon multi-thread, last caller wins
 void WAL::create(const std::string& dir) {
   using namespace boost;
 
   filesystem::path walFile = filesystem::path(dir) / wal_name(0, 0);
   std::string tmpPath = walFile.string() + ".tmp";
 
-  if (filesystem::exists(tmpPath)) {
+  if (filesystem::exists(tmpPath)) { // remove old WAL files, or resolve multi-thread collision (last one win)
     filesystem::remove(tmpPath);
   }
 
-  {
+  { // append snapshot (empty state, all 0s) at head of WAL
     std::shared_ptr<WAL_File> wal(new WAL_File(tmpPath.c_str(), 0));
     WAL_Snapshot snap;
     snap.term = 0;
@@ -121,26 +128,34 @@ void WAL::create(const std::string& dir) {
     msgpack::sbuffer sbuf;
     msgpack::pack(sbuf, snap);
     wal->append(wal_snapshot_Type, (uint8_t*) sbuf.data(), sbuf.size());
-    wal->sync();
+    wal->sync(); // flush to stable storage
   }
 
-  filesystem::rename(tmpPath, walFile);
+  filesystem::rename(tmpPath, walFile); // file ready
 }
 
+  // load WAL from existing dir, and validate using current snap state before ready
+  // only load file whose log index >= snap.index (namely, commands not executed by snapshot state machine)
+  // question: open() doesn't update HardState start_, Don't know why start_ has index
+  // **Answer: hardstate is updated by read_all(). That's why we don't append new logs until read_all() successfully returns
+  // question: where is this snap from? Surely isn't the stable storage
+  // **Answer: snap is loaded from another independent dir. It stands for the saved state machine
+  //           that's why we only keep log indices NOT executed by this state machine
 WAL_ptr WAL::open(const std::string& dir, const WAL_Snapshot& snap) {
   WAL_ptr w(new WAL(dir));
 
   std::vector<std::string> names;
   w->get_wal_names(dir, names);
-  if (names.empty()) {
+  if (names.empty()) { // no .wal files in dir
     LOG_FATAL("wal not found");
   }
 
   uint64_t nameIndex;
-  if (!WAL::search_index(names, snap.index, &nameIndex)) {
+  if (!WAL::search_index(names, snap.index, &nameIndex)) { // no .wal with snap.index
     LOG_FATAL("wal not found");
   }
 
+  // we only care about .wal files containing indices >= snap.index
   std::vector<std::string> check_names(names.begin() + nameIndex, names.end());
   if (!WAL::is_valid_seq(check_names)) {
     LOG_FATAL("invalid wal seq");
@@ -162,6 +177,7 @@ WAL_ptr WAL::open(const std::string& dir, const WAL_Snapshot& snap) {
   return w;
 }
 
+  // Load node HardState and log entries from log files
 Status WAL::read_all(proto::HardState& hs, std::vector<proto::EntryPtr>& ents) {
   std::vector<char> data;
   for (auto file : files_) {
@@ -171,39 +187,39 @@ Status WAL::read_all(proto::HardState& hs, std::vector<proto::EntryPtr>& ents) {
     bool matchsnap = false;
 
     while (offset < data.size()) {
-      size_t left = data.size() - offset;
-      size_t record_begin_offset = offset;
+      size_t left = data.size() - offset; // length of data left unprocessed by far
+      size_t record_begin_offset = offset; // location to start current process procedure
 
-      if (left < sizeof(WAL_Record)) {
+      if (left < sizeof(WAL_Record)) { // record head is broken (length smaller than WAL_record header)
         file->truncate(record_begin_offset);
         LOG_WARN("invalid record len %lu", left);
         break;
       }
 
       WAL_Record record;
-      memcpy(&record, data.data() + offset, sizeof(record));
+      memcpy(&record, data.data() + offset, sizeof(record)); // get data of record head
 
       left -= sizeof(record);
-      offset += sizeof(record);
+      offset += sizeof(record); // beginning of this record's data section
 
       if (record.type == wal_InvalidType) {
         break;
       }
 
       uint32_t record_data_len = WAL_Record_len(record);
-      if (left < record_data_len) {
+      if (left < record_data_len) { // record data is broken (wrong length)
         file->truncate(record_begin_offset);
-        LOG_WARN("invalid record data len %lu, %u", left, record_data_len);
+        LOG_WARN("invalid record data len %lu, supposed to be %u", left, record_data_len);
         break;
       }
 
       char* data_ptr = data.data() + offset;
-      uint32_t crc = compute_crc32(data_ptr, record_data_len);
+      uint32_t crc = compute_crc32(data_ptr, record_data_len); // crc validation
 
       left -= record_data_len;
-      offset += record_data_len;
+      offset += record_data_len; // beginning of next record header
 
-      if (record.crc != 0 && crc != record.crc) {
+      if (record.crc != 0 && crc != record.crc) { // record data is broken (wrong crc)
         file->truncate(record_begin_offset);
         LOG_WARN("invalid record crc %u, %u", record.crc, crc);
         break;
@@ -211,12 +227,13 @@ Status WAL::read_all(proto::HardState& hs, std::vector<proto::EntryPtr>& ents) {
 
       handle_record_wal_record(record.type, data_ptr, record_data_len, matchsnap, hs, ents);
 
-      if (record.type == wal_snapshot_Type) {
+      // notice that it doesn't check duplication of snap record (Why, because it is guaranteed to recorded exactly once?)
+      if (record.type == wal_snapshot_Type) { // how we locate the snapshot record : by type
         matchsnap = true;
       }
     }
 
-    if (!matchsnap) {
+    if (!matchsnap) { // one of goal is to "find snapshot"
       LOG_FATAL("wal: snapshot not found");
     }
   }
@@ -298,13 +315,13 @@ Status WAL::save(proto::HardState hs, const std::vector<proto::EntryPtr>& ents) 
   }
 
   if (files_.back()->file_size < SegmentSizeBytes) {
-    if (mustSync) {
+    if (mustSync) { // don't sync unless necessary
       files_.back()->sync();
     }
     return Status::ok();
   }
 
-  return cut();
+  return cut(); // must sync because files left are large enough
 }
 
 Status WAL::cut() {
@@ -345,6 +362,7 @@ Status WAL::save_hard_state(const proto::HardState& hs) {
   return Status::ok();
 }
 
+  // Search and load all filenames under dir with .wal extension
 void WAL::get_wal_names(const std::string& dir, std::vector<std::string>& names) {
   using namespace boost;
 
@@ -411,7 +429,7 @@ bool WAL::is_valid_seq(const std::vector<std::string>& names) {
       LOG_FATAL("parse correct name should never fail %s", name.c_str());
     }
 
-    if (lastSeq != 0 && lastSeq != curSeq - 1) {
+    if (lastSeq != 0 && lastSeq != curSeq - 1) { // seq must inc by 1 and contiguous
       return false;
     }
     lastSeq = curSeq;
@@ -422,9 +440,11 @@ bool WAL::is_valid_seq(const std::vector<std::string>& names) {
 // searchIndex returns the last array index of names whose raft index section is
 // equal to or smaller than the given index.
 // The given names MUST be sorted.
+  // explain: this is the file containing the given index (notice that indices are unique and monotonically increasing)
+  // we can recover all logs before given index from this file til the very first file
 bool WAL::search_index(const std::vector<std::string>& names, uint64_t index, uint64_t* name_index) {
 
-  for (size_t i = names.size() - 1; i >= 0; --i) {
+  for (size_t i = names.size() - 1; i >= 0; --i) { // iter from last to first file, by seq order
     const std::string& name = names[i];
     uint64_t seq;
     uint64_t curIndex;

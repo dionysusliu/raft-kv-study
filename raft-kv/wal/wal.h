@@ -1,7 +1,7 @@
 #pragma once
 #include <raft-kv/raft/proto.h>
-#include <memory>
-#include <raft-kv/common/status.h>
+#include <memory> // smart pointers, uint_ types
+#include <raft-kv/common/status.h> // function execution status
 #include <stdio.h>
 
 namespace kv {
@@ -14,14 +14,16 @@ struct WAL_Snapshot {
 
 typedef uint8_t WAL_type;
 
-#pragma pack(1)
+#pragma pack(1) // compiler directive
+  // 1-byte "boundary", meaning the starting address of each member needs to be multiple of 1
+  // (namely, no padding between members)
 struct WAL_Record {
   WAL_type type;  /*the data type*/
   uint8_t len[3]; /*the data length, max len: 0x00FFFFFF*/
   uint32_t crc;   /*crc32 for data*/
   char data[0];
 };
-#pragma pack()
+#pragma pack() // recover compiler default pack() config
 
 #define MAX_WAL_RECORD_LEN (0x00FFFFFF)
 
@@ -51,14 +53,20 @@ class WAL {
   //After read_all, the WAL will be ready for appending new records.
   Status read_all(proto::HardState& hs, std::vector<proto::EntryPtr>& ents);
 
+  // save hs and ents to this WAL obj, and may sync
+  // if un-synced files are relatively small, may not sync
   Status save(proto::HardState hs, const std::vector<proto::EntryPtr>& ents);
 
+  // save snapshot AND SYNC immediately
   Status save_snapshot(const WAL_Snapshot& snap);
 
+  // save an entry to this WAL obj
   Status save_entry(const proto::Entry& entry);
 
+  // save hs to this WAL obj
   Status save_hard_state(const proto::HardState& hs);
 
+  // sync the last file in files_ to stable storage
   Status cut();
 
   // release_to releases the wal file, which has smaller index than the given index
@@ -97,6 +105,7 @@ class WAL {
   uint64_t enti_;            // index of the last entry saved to the wal
   std::vector<std::shared_ptr<WAL_File>> files_;
 
+  // Notice: WAL is not thread-safe
 };
 
 }
