@@ -817,7 +817,7 @@ Status Raft::step_candidate(proto::MessagePtr msg) {
           become_leader();
           bcast_append();
         }
-      } else if (quorum() == votes_.size() - gr) {
+      } else if (quorum() >= votes_.size() - gr) {
         // pb.MsgPreVoteResp contains future term of pre-candidate
         // m.Term > r.Term; reuse r.Term
         become_follower(term_, 0);
