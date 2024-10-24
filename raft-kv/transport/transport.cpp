@@ -22,10 +22,10 @@ class TransportImpl : public Transport {
 
   void start(const std::string& host) final {
     server_ = IoServer::create((void*) &io_service_, host, raft_);
-    server_->start();
+    server_->start(); // setup callback on tcp connection
 
     io_thread_ = std::thread([this]() {
-      this->io_service_.run();
+      this->io_service_.run(); // start event loop in new thread
     });
   }
 
@@ -49,6 +49,7 @@ class TransportImpl : public Transport {
   }
 
   void send(std::vector<proto::MessagePtr> msgs) final {
+    // new event: send the message to all peers in cluster
     auto callback = [this](std::vector<proto::MessagePtr> msgs) {
       for (proto::MessagePtr& msg : msgs) {
         if (msg->to == 0) {
@@ -64,7 +65,7 @@ class TransportImpl : public Transport {
         LOG_DEBUG("ignored message %d (sent to unknown peer %lu)", msg->type, msg->to);
       }
     };
-    io_service_.post(std::bind(callback, std::move(msgs)));
+    io_service_.post(std::bind(callback, std::move(msgs))); // post the event
   }
 
   void stop() final {
@@ -72,12 +73,22 @@ class TransportImpl : public Transport {
   }
 
  private:
+  // Server-role logics
+  // accept connection and receive message from other nodes
+  // parse message and forward to Raft Algorithm and Storage logics
   RaftServer* raft_;
   uint64_t id_;
 
+  // event loop for cluster network events
+  // shared by
+  // (1) transport [general events dispatching]
+  // (2) IO server (server-role events)
+  // (3) peers (client-role events)
   std::thread io_thread_;
   boost::asio::io_service io_service_;
 
+  // Client-role logics
+  // each peer is a proxy of remote node, through which we send message
   std::mutex mutex_;
   std::unordered_map<uint64_t, PeerPtr> peers_;
 

@@ -3,6 +3,8 @@ project(raft-kv)
 
 set(CMAKE_CXX_STANDARD 17)
 
+set(CMAKE_BUILD_TYPE Debug)
+
 add_definitions(-Wall)
 add_definitions(-DDEBUG)
 
@@ -39,3 +41,20 @@ if (GoogleTest_FOUND)
 endif (GoogleTest_FOUND)
 
 configure_file(Procfile.in Procfile)
+
+# rocksdb
+pkg_check_modules(RocksDB rocksdb)
+if (RocksDB_FOUND)
+    include_directories(${RocksDB_INCLUDE_DIRS})
+    # compression lib
+    find_library(LIB_ZSTD zstd REQUIRED)
+    find_library(LIB_LZ4 lz4 REQUIRED)
+    find_library(LIB_BZIP2 bz2 REQUIRED)
+    find_library(LIB_ZLIB z REQUIRED)
+    find_library(LIB_SNAPPY snappy REQUIRED)
+    set(LIBS
+            ${LIBS}
+            ${RocksDB_LIBRARIES}
+            ${LIB_ZSTD} ${LIB_LZ4} ${LIB_BZIP2} ${LIB_ZLIB} ${LIB_SNAPPY}
+    )
+endif(RocksDB_FOUND)

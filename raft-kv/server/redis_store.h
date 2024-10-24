@@ -77,7 +77,7 @@ class RedisStore {
   void start_accept();
 
   RaftNode* server_;
-  boost::asio::io_service io_service_;
+  boost::asio::io_service io_service_; // event loop for user events
   boost::asio::ip::tcp::acceptor acceptor_;
   std::thread worker_;
   std::unordered_map<std::string, std::string> key_values_;

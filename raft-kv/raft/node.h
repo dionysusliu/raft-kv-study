@@ -109,6 +109,7 @@ class Node {
 // more fully there.
 class RawNode : public Node {
  public:
+    // initialize raft node algorithmx
   explicit RawNode(const Config& conf, const std::vector<PeerContext>& peers);
   explicit RawNode(const Config& conf);
 

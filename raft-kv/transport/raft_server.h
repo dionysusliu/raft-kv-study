@@ -6,6 +6,7 @@
 
 namespace kv {
 
+ // * defines how one raft node interact with the Raft Cluster
 class RaftServer {
  public:
   virtual ~RaftServer() = default;
@@ -22,6 +23,8 @@ class RaftServer {
 };
 typedef std::shared_ptr<RaftServer> RaftServerPtr;
 
+// connection layer of a RaftServer
+ // handle network connection and events for RaftServer
 class IoServer {
  public:
   virtual void start() = 0;

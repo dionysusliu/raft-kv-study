@@ -16,6 +16,7 @@ class ServerSession : public std::enable_shared_from_this<ServerSession> {
 
   }
 
+  // Async: read meta section of incoming message
   void start_read_meta() {
     assert(sizeof(meta_) == 5);
     meta_.type = 0;
@@ -31,13 +32,14 @@ class ServerSession : public std::enable_shared_from_this<ServerSession> {
         return;
       }
 
-      if (bytes != sizeof(meta_)) {
+      if (bytes != sizeof(meta_)) { // only make one read
         LOG_DEBUG("invalid data len %lu", bytes);
         return;
       }
       self->start_read_message();
     };
 
+    // notice that it would read up to sizeof(meta_) bytes
     boost::asio::async_read(socket, buffer, boost::asio::transfer_exactly(sizeof(meta_)), handler);
   }
 
@@ -48,7 +50,7 @@ class ServerSession : public std::enable_shared_from_this<ServerSession> {
     }
 
     auto self = shared_from_this();
-    auto buffer = boost::asio::buffer(buffer_.data(), len);
+    auto buffer = boost::asio::buffer(buffer_.data(), len); // create a mutable view on buffer_.data() of $len bytes
     auto handler = [self, len](const boost::system::error_code& error, std::size_t bytes) {
       assert(len == ntohl(self->meta_.len));
       if (error || bytes == 0) {
@@ -130,7 +132,7 @@ class AsioServer : public IoServer {
     acceptor_.open(endpoint.protocol());
     acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(1));
     acceptor_.bind(endpoint);
-    acceptor_.listen();
+    acceptor_.listen(); // it still won't listen by now because the io_service is not running yet (triggered by Transport::start())
     LOG_DEBUG("listen at %s:%d", address.to_string().c_str(), port);
   }
 

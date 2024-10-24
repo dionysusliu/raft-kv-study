@@ -6,7 +6,9 @@
 
 namespace kv {
 
+
 class Storage {
+    // Storage contains the stable entries since the last snapshot
  public:
   ~Storage() = default;
 

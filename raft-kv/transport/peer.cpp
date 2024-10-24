@@ -19,6 +19,7 @@ class ClientSession {
   void send(uint8_t transport_type, const uint8_t* data, uint32_t len) {
     uint32_t remaining = buffer_.readable_bytes();
 
+    // push meta and data into the buffer
     TransportMeta meta;
     meta.type = transport_type;
     meta.len = htonl(len);
@@ -27,7 +28,7 @@ class ClientSession {
     buffer_.put(data, len);
     assert(remaining + sizeof(TransportMeta) + len == buffer_.readable_bytes());
 
-    if (connected_ && remaining == 0) {
+    if (connected_ && remaining == 0) { // buffer not done reading
       start_write();
     }
   }
@@ -51,20 +52,20 @@ class ClientSession {
   }
 
   void start_write() {
-    if (!buffer_.readable()) {
+    if (!buffer_.readable()) { // no more data to transmit
       return;
     }
 
     uint32_t remaining = buffer_.readable_bytes();
-    auto buffer = boost::asio::buffer(buffer_.reader(), remaining);
+    auto buffer = boost::asio::buffer(buffer_.reader(), remaining); // ! creates a *view* for data to write in this->buffer_
     auto handler = [this](const boost::system::error_code& error, std::size_t bytes) {
       if (error || bytes == 0) {
         LOG_DEBUG("send [%lu] error %s", this->peer_id_, error.message().c_str());
         this->close_session();
         return;
       }
-      this->buffer_.read_bytes(bytes);
-      this->start_write();
+      this->buffer_.read_bytes(bytes); // $bytes of bytes has been successfully written from buffer_ to network
+      this->start_write(); // cooperate with line 55. In case not all data are transmitted in one write
     };
     boost::asio::async_write(socket_, buffer, handler);
   }
@@ -74,7 +75,7 @@ class ClientSession {
   boost::asio::ip::tcp::endpoint endpoint_;
   PeerImpl* peer_;
   uint64_t peer_id_;
-  ByteBuffer buffer_;
+  ByteBuffer buffer_; // the buffer is local to the session, so only one thread accessing it
   bool connected_;
 };
 
@@ -130,6 +131,9 @@ class PeerImpl : public Peer {
   void do_send_data(uint8_t type, const uint8_t* data, uint32_t len) {
     if (!session_) {
       session_ = std::make_shared<ClientSession>(io_service_, this);
+      // two async tasks
+      // logically it would first connect to endpoint before really sending data
+      // actually not safe if send() checks connection status before async connect() finishes, this send task would exit early without writing
       session_->send(type, data, len);
       session_->start_connect();
     } else {
@@ -144,7 +148,7 @@ class PeerImpl : public Peer {
         LOG_ERROR("timer waiter error %s", err.message().c_str());
         return;
       }
-      this->start_timer();
+      this->start_timer(); // make start_timer() it periodic
     });
 
     static std::atomic<uint32_t> tick;
@@ -167,7 +171,7 @@ ClientSession::ClientSession(boost::asio::io_service& io_service, PeerImpl* peer
       endpoint_(peer->endpoint_),
       peer_(peer),
       peer_id_(peer_->peer_),
-      connected_(false) {
+      connected_(false) { // at init, the client is "not connected"
 
 }
 

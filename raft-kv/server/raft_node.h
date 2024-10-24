@@ -9,11 +9,12 @@
 #include <raft-kv/wal/wal.h>
 #include <raft-kv/snap/snapshotter.h>
 
+// Top level module of one Raft node instance
 namespace kv {
 
 class RaftNode : public RaftServer {
  public:
-  static void main(uint64_t id, const std::string& cluster, uint16_t port);
+  static void main(uint64_t id, const std::string& cluster, uint16_t port); // static function, used as main entry point of process
 
   explicit RaftNode(uint64_t id, const std::string& cluster, uint16_t port);
 
@@ -50,10 +51,11 @@ class RaftNode : public RaftServer {
 
   void schedule();
 
+ // states
   uint16_t port_;
   pthread_t pthread_id_;
   boost::asio::io_service io_service_;
-  boost::asio::deadline_timer timer_;
+  boost::asio::deadline_timer timer_; // intervals the raft operations
   uint64_t id_;
   std::vector<std::string> peers_;
   uint64_t last_index_;
@@ -61,16 +63,18 @@ class RaftNode : public RaftServer {
   uint64_t snapshot_index_;
   uint64_t applied_index_;
 
-  MemoryStoragePtr storage_;
-  std::unique_ptr<Node> node_;
-  TransporterPtr transport_;
-  std::shared_ptr<RedisStore> redis_server_;
+  MemoryStoragePtr storage_; // state machine storage
+  std::unique_ptr<Node> node_; // raft algorithm module?
+  TransporterPtr transport_; // cluster messaging
+  std::shared_ptr<RedisStore> redis_server_; // kv storage engine
 
+ // Snapshot module for kv pairs
   std::vector<uint8_t> snap_data_;
   std::string snap_dir_;
   uint64_t snap_count_;
-  std::unique_ptr<Snapshotter> snapshotter_;
+  std::unique_ptr<Snapshotter> snapshotter_; // facade for FS interface
 
+ // WAL module
   std::string wal_dir_;
   WAL_ptr wal_;
 };

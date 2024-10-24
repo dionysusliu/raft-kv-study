@@ -136,13 +136,14 @@ RedisStore::RedisStore(RaftNode* server, std::vector<uint8_t> snap, uint16_t por
     std::unordered_map<std::string, std::string> kv;
     msgpack::object_handle oh = msgpack::unpack((const char*) snap.data(), snap.size());
     try {
-      oh.get().convert(kv);
+      oh.get().convert(kv); // ! recover key-val pairs from snapshot
     } catch (std::exception& e) {
       LOG_WARN("invalid snapshot");
     }
     std::swap(kv, key_values_);
   }
 
+  // how to setup a tcp acceptor of boost
   auto address = boost::asio::ip::address::from_string("0.0.0.0");
   auto endpoint = boost::asio::ip::tcp::endpoint(address, port);
 

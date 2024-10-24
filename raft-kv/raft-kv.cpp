@@ -9,6 +9,7 @@ static const char* g_cluster = NULL;
 static uint16_t g_port = 0;
 
 int main(int argc, char* argv[]) {
+  // use GOption to read command arguments
   GOptionEntry entries[] = {
       {"id", 'i', 0, G_OPTION_ARG_INT64, &g_id, "node id", NULL},
       {"cluster", 'c', 0, G_OPTION_ARG_STRING, &g_cluster, "comma separated cluster peers", NULL},
@@ -18,8 +19,8 @@ int main(int argc, char* argv[]) {
 
   GError* error = NULL;
   GOptionContext* context = g_option_context_new("usage");
-  g_option_context_add_main_entries(context, entries, NULL);
-  if (!g_option_context_parse(context, &argc, &argv, &error)) {
+  g_option_context_add_main_entries(context, entries, NULL); // a GOptioncontext defines which options are accepted by cmd option parser
+  if (!g_option_context_parse(context, &argc, &argv, &error)) { // parse the arguments
     fprintf(stderr, "option parsing failed: %s\n", error->message);
     exit(EXIT_FAILURE);
   }
@@ -32,6 +33,6 @@ int main(int argc, char* argv[]) {
     exit(EXIT_FAILURE);
   }
 
-  kv::RaftNode::main(g_id, g_cluster, g_port);
+  kv::RaftNode::main(g_id, g_cluster, g_port); // main entry point
   g_option_context_free(context);
 }

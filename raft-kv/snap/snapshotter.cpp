@@ -18,6 +18,8 @@ Status Snapshotter::load(proto::Snapshot& snapshot) {
   get_snap_names(names);
 
   for (std::string& filename : names) {
+      // filenames are sorted from latest to oldest
+      // we thus load the latest, unbroken snapshot
     Status status = load_snap(filename, snapshot);
     if (status.is_ok()) {
       return Status::ok();

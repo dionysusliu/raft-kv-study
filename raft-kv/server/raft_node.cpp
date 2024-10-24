@@ -20,25 +20,32 @@ RaftNode::RaftNode(uint64_t id, const std::string& cluster, uint16_t port)
       applied_index_(0),
       storage_(new MemoryStorage()),
       snap_count_(defaultSnapCount) {
+
+  // parse the peers id
   boost::split(peers_, cluster, boost::is_any_of(","));
   if (peers_.empty()) {
     LOG_FATAL("invalid args %s", cluster.c_str());
   }
 
+  // create the snap and wal directories, named as "node_<id>"
   std::string work_dir = "node_" + std::to_string(id);
   snap_dir_ = work_dir + "/snap";
   wal_dir_ = work_dir + "/wal";
 
+  // init/recover snapshot
   if (!boost::filesystem::exists(snap_dir_)) {
     boost::filesystem::create_directories(snap_dir_);
   }
 
+  // use unique_ptr::reset() to two-phase init an unique_ptr defined as class member
   snapshotter_.reset(new Snapshotter(snap_dir_));
 
   bool wal_exists = boost::filesystem::exists(wal_dir_);
 
+  // recover the state machine and logs from WAL
   replay_WAL();
 
+  // hardcoded configs for raft node
   Config c;
   c.id = id;
   c.election_tick = 10;
@@ -60,6 +67,7 @@ RaftNode::RaftNode(uint64_t id, const std::string& cluster, uint16_t port)
     LOG_FATAL("invalid configure %s", status.to_string().c_str());
   }
 
+  // initialize the raft algorithm module
   if (wal_exists) {
     node_.reset(Node::restart_node(c));
   } else {
@@ -198,7 +206,7 @@ void RaftNode::open_WAL(const proto::Snapshot& snap) {
   walsnap.term = snap.metadata.term;
   LOG_INFO("loading WAL at term %lu and index %lu", walsnap.term, walsnap.index);
 
-  wal_ = WAL::open(wal_dir_, walsnap);
+  wal_ = WAL::open(wal_dir_, walsnap); // by now we have loaded the correct WAL file list
 }
 
 void RaftNode::replay_WAL() {
@@ -216,12 +224,12 @@ void RaftNode::replay_WAL() {
     storage_->apply_snapshot(snapshot);
   }
 
-  open_WAL(snapshot);
+  open_WAL(snapshot); // determine WAL files to load
   assert(wal_ != nullptr);
 
   proto::HardState hs;
   std::vector<proto::EntryPtr> ents;
-  status = wal_->read_all(hs, ents);
+  status = wal_->read_all(hs, ents); // load the state to replay
   if (!status.is_ok()) {
     LOG_FATAL("failed to read WAL %s", status.to_string().c_str());
   }
@@ -356,7 +364,7 @@ void RaftNode::maybe_trigger_snapshot() {
 }
 
 void RaftNode::schedule() {
-  pthread_id_ = pthread_self();
+  pthread_id_ = pthread_self(); // pthread_id is the thread running raft algorithm's event loop
 
   proto::SnapshotPtr snap;
   Status status = storage_->snapshot(snap);
@@ -364,20 +372,22 @@ void RaftNode::schedule() {
     LOG_FATAL("get snapshot failed %s", status.to_string().c_str());
   }
 
-  *conf_state_ = snap->metadata.conf_state;
+  // permanent state
+  *conf_state_ = snap->metadata.conf_state; // snap is shared by storage_ already
   snapshot_index_ = snap->metadata.index;
   applied_index_ = snap->metadata.index;
 
+  // setup storage engine
   redis_server_ = std::make_shared<RedisStore>(this, std::move(snap_data_), port_);
   std::promise<pthread_t> promise;
   std::future<pthread_t> future = promise.get_future();
-  redis_server_->start(promise);
+  redis_server_->start(promise); // seems like an async wait
   future.wait();
-  pthread_t id = future.get();
+  pthread_t id = future.get(); // a separate thread running Storage Engine
   LOG_DEBUG("server start [%lu]", id);
 
-  start_timer();
-  io_service_.run();
+  start_timer(); // periodic node ticking
+  io_service_.run(); // event loop for (1) timer (2) raft algorithm callback
 }
 
 void RaftNode::propose(std::shared_ptr<std::vector<uint8_t>> data, const StatusCallback& callback) {
@@ -395,7 +405,7 @@ void RaftNode::propose(std::shared_ptr<std::vector<uint8_t>> data, const StatusC
 }
 
 void RaftNode::process(proto::MessagePtr msg, const StatusCallback& callback) {
-  if (pthread_id_ != pthread_self()) {
+  if (pthread_id_ != pthread_self()) { // make sure the raft algorithm is executed in RaftNode's event loop
     io_service_.post([this, msg, callback]() {
       Status status = this->node_->step(msg);
       callback(status);
@@ -421,7 +431,7 @@ void RaftNode::report_snapshot(uint64_t id, SnapshotStatus status) {
   LOG_DEBUG("no impl yet");
 }
 
-static RaftNodePtr g_node = nullptr;
+static RaftNodePtr g_node = nullptr; // the process-scoped RaftNode instance
 
 void on_signal(int) {
   LOG_INFO("catch signal");
@@ -433,21 +443,21 @@ void on_signal(int) {
 void RaftNode::main(uint64_t id, const std::string& cluster, uint16_t port) {
   ::signal(SIGINT, on_signal);
   ::signal(SIGHUP, on_signal);
-  g_node = std::make_shared<RaftNode>(id, cluster, port);
+  g_node = std::make_shared<RaftNode>(id, cluster, port); // ? how to init a raft node
 
-  g_node->transport_ = Transport::create(g_node.get(), g_node->id_);
+  g_node->transport_ = Transport::create(g_node.get(), g_node->id_); // set up cluster networking config based on RaftNode's config (via RaftServer interface)
   std::string& host = g_node->peers_[id - 1];
-  g_node->transport_->start(host);
+  g_node->transport_->start(host); // register async callback on tcp connection
 
   for (uint64_t i = 0; i < g_node->peers_.size(); ++i) {
     uint64_t peer = i + 1;
     if (peer == g_node->id_) {
       continue;
     }
-    g_node->transport_->add_peer(peer, g_node->peers_[i]);
+    g_node->transport_->add_peer(peer, g_node->peers_[i]); // register proxy module for remote Raft peers
   }
 
-  g_node->schedule();
+  g_node->schedule(); // what does schedule() do? would it ever return?
 }
 
 void RaftNode::stop() {

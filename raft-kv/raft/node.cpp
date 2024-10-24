@@ -12,10 +12,10 @@ Node* Node::restart_node(const Config& conf) {
 }
 
 RawNode::RawNode(const Config& conf, const std::vector<PeerContext>& peers) {
-  raft_ = std::make_shared<Raft>(conf);
+  raft_ = std::make_shared<Raft>(conf); // raft state machine
 
   uint64_t last_index = 0;
-  Status status = conf.storage->last_index(last_index);
+  Status status = conf.storage->last_index(last_index); // recover index of last entry in log
   if (!status.is_ok()) {
     LOG_FATAL("%s", status.to_string().c_str());
   }
@@ -23,10 +23,11 @@ RawNode::RawNode(const Config& conf, const std::vector<PeerContext>& peers) {
   // If the log is empty, this is a new RawNode (like StartNode); otherwise it's
   // restoring an existing RawNode (like RestartNode).
   if (last_index == 0) {
-    raft_->become_follower(1, 0);
+    raft_->become_follower(1, 0); // start as follower
 
     std::vector<proto::EntryPtr> entries;
 
+    // prepend the ConfChangeAddNode at start of raft log
     for (size_t i = 0; i < peers.size(); ++i) {
       auto& peer = peers[i];
       proto::ConfChange cs = proto::ConfChange{
@@ -40,8 +41,8 @@ RawNode::RawNode(const Config& conf, const std::vector<PeerContext>& peers) {
 
       proto::EntryPtr entry(new proto::Entry());
       entry->type = proto::EntryConfChange;
-      entry->term = 1;
-      entry->index = i + 1;
+      entry->term = 1; // begin term is 1
+      entry->index = i + 1; // begin index is 1
       entry->data = std::move(data);
       entries.push_back(entry);
     }
@@ -49,7 +50,7 @@ RawNode::RawNode(const Config& conf, const std::vector<PeerContext>& peers) {
     raft_->raft_log_->append(entries);
     raft_->raft_log_->committed_ = entries.size();
 
-    for (auto& peer : peers) {
+    for (auto& peer : peers) { // process AddNode after adding the ConfChangeAddNode entries
       raft_->add_node(peer.id);
     }
   }
