@@ -1,6 +1,17 @@
 # raft-kv
 
-## Getting Started
+![Raft-KV-icon](assets/raft-kv-icon-with-text.jpg)
+
+## About this project
+Distributed storage services are the backbone of modern Internet applications. However, building a robust distributed storage service from scratch is challenging, particularly in orchestrating the subtle cases in distributed consensus. 
+
+The **Raft-KV** addresses this by providing an **abstract Raft consensus layer** that can be integrated with **any** key-value (KV) storage engine. This separation of concerns between the storage layer and the distributed consensus layer enhances modularity, making it easier and more efficient for developers to build reliable storage clusters. 
+
+The project's goal is to enable developers to build **robust** distributed storage clusters by simply **"plugging"** their custom KV storage engine into the Raft consensus layer. This provides a flexible and reliable solution for distributed data management. 
+
+this project serves as a comprehensive study of distributed systems, consensus algorithms, and modern C++ development.
+
+## Getting started
 
 ### Build
     mkdir -p raft-kv/build
